@@ -1,5 +1,5 @@
 # cmc-corp-rag
- 
+ (require gemini api key)
 Running the System
 To run the system, use the following command:
 
