@@ -19,17 +19,18 @@ class LLMHandler:
     def get_llm(self):
         return self.llm
 class VectorDatabase:
-    def __init__(self, model_name: str, collection_name: str, db_path: str):
+    def __init__(self, model_name: str, collection_name: str, api: str):
         self.embeddings = HuggingFaceEmbeddings(model_name=model_name)
         self.collection_name = collection_name
-        self.db_path = db_path
+        self.api = api
         self.db = self.load_db()
         
     def load_db(self):
         return QdrantVectorStore.from_existing_collection(
             embedding=self.embeddings,
             collection_name=self.collection_name,
-            path=self.db_path
+            url="5d9673e8-d966-4738-adbb-95a5842604ba.europe-west3-0.gcp.cloud.qdrant.io:6333",
+            api_key=self.api
         )
     def get_retriever(self):
         return self.db
@@ -40,6 +41,7 @@ class QuestionAnsweringChain:
         self.num_docs = num_docs
         self.llm = llm_handler.get_llm()
         self.db = vector_db.get_retriever()
+        self.extracted_chunks = ""
         self.memory = []
         if apply_rerank:
             self.retriever = self.db.as_retriever(search_kwargs={"k": num_docs * 2})
@@ -48,7 +50,7 @@ class QuestionAnsweringChain:
         self.output_parser = StrOutputParser()
         self.prompt_template = ChatPromptTemplate.from_template(
             """
-            Bạn là chatbot thông minh. Dựa vào những thông tin dưới đây, nếu không có dữ liệu liên quan đến câu hỏi, hãy trả lời 'Chúng tôi không có thông tin', ngoài ra có thể có 1 số câu hỏi không cần thôn tin dưới, hãy trả lời tự nhiên:
+            Bạn là chatbot thông minh. Dựa vào những thông tin dưới đây để trả lời chi tiết câu hỏi, nếu không có dữ liệu liên quan đến câu hỏi, hãy trả lời 'Chúng tôi không có thông tin', ngoài ra có thể có 1 số câu hỏi không cần thôn tin dưới, hãy trả lời tự nhiên:
             {context}
 
             Lịch sử hội thoại:
@@ -62,17 +64,22 @@ class QuestionAnsweringChain:
         self.chain = self.create_chain(apply_rewrite=apply_rewrite, apply_rerank=apply_rerank)
 
     def format_docs(self, docs):
-        return "\n\n".join(doc.page_content for doc in docs)
+        formatted = "\n\n".join(doc.page_content for doc in docs)
+        self.extracted_chunks = formatted  # Store formatted chunks
+        return formatted
 
     def ReWrite(self, query):
         template = f'''
-        Viết lại câu hỏi dưới đây sao cho rõ ràng, chính xác và phù hợp với ngữ cảnh tìm kiếm. Thêm vào đó, cung cấp một chút gợi ý và suy luận để tăng khả năng tìm kiếm và trả lời từ cơ sở dữ liệu. Đảm bảo câu hỏi mới vẫn giữ nguyên ý nghĩa của câu hỏi gốc.
+        Sử dụng lịch sử chat (chỉ chọn những thông tin liên quan và gần nhất với câu hỏi) để viết lại câu hỏi dưới đây sao cho rõ ràng, chính xác, và phù hợp với ngữ cảnh tìm kiếm. Đảm bảo rằng câu hỏi viết lại vẫn giữ nguyên ý nghĩa của câu hỏi gốc.(chỉ trả về câu hỏi viết lại)
+
+        Lịch sử chat: "{self.get_chat_history()}"
 
         Câu hỏi gốc: "{query}"
 
         Câu hỏi viết lại:
         '''
         rewrite_query = self.llm.invoke(template)
+        print(rewrite_query.content)
         return rewrite_query.content
 
     def ReRank(self, query_docs):
@@ -90,11 +97,11 @@ class QuestionAnsweringChain:
     def find_neighbor(self, docs):
         for doc in docs:
             doc_id = doc.metadata['_id']
-            neighbor_ids = [doc_id - 2, doc_id - 1, doc_id + 1, doc_id + 2]
+            neighbor_ids = [doc_id - 2, doc_id - 1,doc_id, doc_id + 1, doc_id + 2]
             neighbors = self.db.get_by_ids(neighbor_ids)
             neighbors.append(doc)
             neighbors_sorted = sorted(neighbors, key=lambda x: x.metadata['_id'])
-            doc.page_content = '\n'.join([neighbor.page_content for neighbor in neighbors_sorted])
+            doc.page_content = '.'.join([neighbor.page_content for neighbor in neighbors_sorted])
         return docs
 
     def get_chat_history(self):
@@ -118,6 +125,7 @@ class QuestionAnsweringChain:
             {"context": retriever_handler, "question": RunnablePassthrough(), 'chat_history': chat_history_handler}
         )
         chain = pre_retriever | setup_and_retrieval | self.prompt_template | self.llm | self.output_parser
+
         return chain
 
     def run(self, question: str):
@@ -130,4 +138,4 @@ class QuestionAnsweringChain:
         if len(self.memory) > 3:
             self.memory.pop(0)
             self.memory.pop(0)
-        return response
+        return response, self.extracted_chunks

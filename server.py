@@ -6,19 +6,20 @@ import os
 # Parameters
 load_dotenv()
 gemini_key = os.getenv('gemini_key')
+qdrant_key=os.getenv('qdrant_key')
 rerank=True
-rewrite=False
+rewrite=True
 num_docs=5
 
 
 
 
-# Initialize or get existing instances from session state
+
 if 'vector_db' not in st.session_state:
     st.session_state.vector_db = VectorDatabase(
         model_name="hiieu/halong_embedding",
         collection_name='cmc_corp_full_web',
-        db_path='db_qdrant'
+        api=qdrant_key
     )
 if 'llm_handler' not in st.session_state:
     st.session_state.llm_handler = LLMHandler(model_name="gemini-1.5-flash", gemini_key=gemini_key)
@@ -31,7 +32,6 @@ if 'qa_chain' not in st.session_state:
         apply_rewrite=rewrite
     )
 
-# Initialize or get existing chat history from session state
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
@@ -55,10 +55,11 @@ if st.button('Send'):
 
         # Get AI response
         result = st.session_state.qa_chain.run(question)
-        st.write(result)
-        # Add AI response to chat history
-        st.session_state.messages.append({'role': 'ai', 'content': result})
+        st.write(result[0])
+        st.markdown("<h2><b>Data source:</b></h2>", unsafe_allow_html=True)
+        st.write(result[1])
 
-  
-        
+        # Add AI response to chat history
+        st.session_state.messages.append({'role': 'ai', 'content': result[0]})
+
 
